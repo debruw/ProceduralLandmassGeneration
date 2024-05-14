@@ -5,10 +5,10 @@ using UnityEngine;
 public static class MeshGenerator
 {
     public static MeshData GenerateTerrainMesh(float[,] heightMap, float heightMultiplier, AnimationCurve _heightCurve,
-        int levelOfDetail)
+        int levelOfDetail, bool useFlatShading)
     {
         AnimationCurve heightCurve = new AnimationCurve(_heightCurve.keys);
-        
+
         int meshSimplificationIncrement = (levelOfDetail == 0) ? 1 : levelOfDetail * 2;
         int borderedSize = heightMap.GetLength(0);
         int meshSize = borderedSize - 2 * meshSimplificationIncrement;
@@ -16,10 +16,10 @@ public static class MeshGenerator
 
         float topLeftX = (meshSizeUnsimplified - 1) / -2f;
         float topLeftZ = (meshSizeUnsimplified - 1) / 2f;
-        
+
         int verticesPerLine = (meshSize - 1) / meshSimplificationIncrement + 1;
 
-        MeshData meshData = new MeshData(verticesPerLine);
+        MeshData meshData = new MeshData(verticesPerLine, useFlatShading);
 
         int[,] vertexIndicesMap = new int[borderedSize, borderedSize];
         int meshVertexIndex = 0;
@@ -49,10 +49,12 @@ public static class MeshGenerator
             for (int x = 0; x < borderedSize; x += meshSimplificationIncrement)
             {
                 int vertexIndex = vertexIndicesMap[x, y];
-                Vector2 percent = new Vector2((x - meshSimplificationIncrement) / (float)meshSize, (y - meshSimplificationIncrement) / (float)meshSize);
+                Vector2 percent = new Vector2((x - meshSimplificationIncrement) / (float)meshSize,
+                    (y - meshSimplificationIncrement) / (float)meshSize);
                 float height = heightCurve.Evaluate(heightMap[x, y]) * heightMultiplier;
-                Vector3 vertexPosition = new Vector3(topLeftX + percent.x * meshSizeUnsimplified, height, topLeftZ - percent.y * meshSizeUnsimplified);
-                
+                Vector3 vertexPosition = new Vector3(topLeftX + percent.x * meshSizeUnsimplified, height,
+                    topLeftZ - percent.y * meshSizeUnsimplified);
+
                 meshData.AddVertex(vertexPosition, percent, vertexIndex);
 
                 if (x < borderedSize - 1 && y < borderedSize - 1)
@@ -69,8 +71,8 @@ public static class MeshGenerator
             }
         }
 
-        meshData.BakeNormals();
-        
+        meshData.Finalize();
+
         return meshData;
     }
 }
@@ -86,10 +88,13 @@ public class MeshData
     int[] borderTriangles;
 
     int triangleIndex;
-    private int borderTriangleIndex;
+    int borderTriangleIndex;
+    private bool useFlatShading;
 
-    public MeshData(int verticesPerLine)
+    public MeshData(int verticesPerLine, bool useFlatShading)
     {
+        this.useFlatShading = useFlatShading;
+
         vertices = new Vector3[verticesPerLine * verticesPerLine];
         uvs = new Vector2[verticesPerLine * verticesPerLine];
         triangles = new int[(verticesPerLine - 1) * (verticesPerLine - 1) * 6];
@@ -190,9 +195,37 @@ public class MeshData
         return Vector3.Cross(sideAB, sideAC).normalized;
     }
 
-    public void BakeNormals()
+    public void Finalize()
+    {
+        if (useFlatShading)
+        {
+            FlatShading();
+        }
+        else
+        {
+            BakeNormals();
+        }
+    }
+
+    void BakeNormals()
     {
         bakedNormals = CalculateNormals();
+    }
+
+    void FlatShading()
+    {
+        Vector3[] flatShadedVertices = new Vector3[triangles.Length];
+        Vector2[] flatShadedUvs = new Vector2[triangles.Length];
+
+        for (int i = 0; i < triangles.Length; i++)
+        {
+            flatShadedVertices[i] = vertices[triangles[i]];
+            flatShadedUvs[i] = uvs[triangles[i]];
+            triangles[i] = i;
+        }
+
+        vertices = flatShadedVertices;
+        uvs = flatShadedUvs;
     }
 
     public Mesh CreateMesh()
@@ -202,7 +235,15 @@ public class MeshData
         mesh.triangles = triangles;
         mesh.uv = uvs;
 
-        mesh.normals = bakedNormals;
+        if (useFlatShading)
+        {
+            mesh.RecalculateNormals();
+        }
+        else
+        {
+            mesh.normals = bakedNormals;
+        }
+        
         return mesh;
     }
 }
